@@ -3,9 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"github.com/PuerkitoBio/goquery"
-	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
-	"github.com/influxdata/influxdb-client-go/v2/api"
 	"io"
 	"log"
 	"net/http"
@@ -16,27 +13,29 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/PuerkitoBio/goquery"
+	"github.com/newrelic/go-agent/v3/newrelic"
 )
 
 var WhitespaceSplitRe = regexp.MustCompile(`\s+`)
 
 func main() {
-	influxAddr, ok := os.LookupEnv("INFLUX_ADDR")
+	nrLicenseKey, ok := os.LookupEnv("NEW_RELIC_LICENSE_KEY")
 	if !ok {
-		log.Fatalln("INFLUX_ADDR not set")
+		log.Fatalln("NEW_RELIC_LICENSE_KEY not set")
 	}
-	influxToken, ok := os.LookupEnv("INFLUX_TOKEN")
+	nrAppName, ok := os.LookupEnv("NEW_RELIC_APP_NAME")
 	if !ok {
-		log.Fatalln("INFLUX_TOKEN not set")
+		log.Fatalln("NEW_RELIC_APP_NAME not set")
 	}
-	influxOrg, ok := os.LookupEnv("INFLUX_ORG")
-	if !ok {
-		log.Fatalln("INFLUX_ORG not set")
-	}
-	influxBucket, ok := os.LookupEnv("INFLUX_BUCKET")
-	if !ok {
-		log.Fatalln("INFLUX_BUCKET not set")
-	}
+
+	app, err := newrelic.NewApplication(
+		newrelic.ConfigAppName(nrAppName),
+		newrelic.ConfigLicense(nrLicenseKey),
+		newrelic.ConfigDistributedTracerEnabled(true),
+	)
+
 	routerAddr, ok := os.LookupEnv("ROUTER_ADDR")
 	if !ok {
 		log.Fatalln("ROUTER_ADDR not set")
@@ -51,22 +50,12 @@ func main() {
 	}
 	rateRaw, ok := os.LookupEnv("SCRAPE_RATE_SECS")
 	if !ok {
-		rateRaw = "10"
+		rateRaw = "120"
 	}
 	rate, err := strconv.ParseInt(rateRaw, 10, 64)
 	if err != nil {
 		log.Panicln(err)
 	}
-
-	influxClient := influxdb2.NewClient(influxAddr, influxToken)
-	writeAPI := influxClient.WriteAPI(influxOrg, influxBucket)
-	errs := writeAPI.Errors()
-
-	go func() {
-		for err := range errs {
-			log.Println(err)
-		}
-	}()
 
 	jar, err := cookiejar.New(&cookiejar.Options{})
 	if err != nil {
@@ -74,10 +63,11 @@ func main() {
 	}
 
 	client := http.Client{Jar: jar}
+	client.Transport = newrelic.NewRoundTripper(client.Transport)
 	login(client, routerAddr, routerUsername, routerPassword)
 
 	for {
-		extractModemData(client, writeAPI, routerAddr, routerUsername, routerPassword)
+		extractModemData(client, app, routerAddr, routerUsername, routerPassword)
 		time.Sleep(time.Duration(rate) * time.Second)
 	}
 }
@@ -92,18 +82,28 @@ func login(client http.Client, routerAddr string, routerUsername string, routerP
 	}
 
 	bodyRaw, err := io.ReadAll(res.Body)
+	if err != nil {
+		log.Panicln(err)
+	}
 	if strings.Contains(string(bodyRaw), "alert(\"Incorrect ") {
 		log.Panicln("Incorrect user name or password")
 	}
+
 	return
 }
 
-func extractModemData(client http.Client, writeAPI api.WriteAPI, routerAddr string, routerUsername string, routerPassword string) {
+func extractModemData(client http.Client, app *newrelic.Application, routerAddr string, routerUsername string, routerPassword string) {
+	txn := app.StartTransaction("extractModemData")
+	defer txn.End()
+
 	var res, err = client.Get(fmt.Sprintf("%s/network_setup.jst", routerAddr))
 	if err != nil {
 		log.Panicln(err)
 	}
 	bodyRaw, err := io.ReadAll(res.Body)
+	if err != nil {
+		log.Panicln(err)
+	}
 	body := string(bodyRaw)
 
 	if strings.Contains(body, "alert(\"Please Login First!\");") {
@@ -118,20 +118,19 @@ func extractModemData(client http.Client, writeAPI api.WriteAPI, routerAddr stri
 
 	downstreamColumns := extractIndexedTable(doc, 13)
 	downstreamEntries := columnsToMaps(downstreamColumns)
-	reportDownstreamEntries(downstreamEntries, writeAPI)
+	reportDownstreamEntries(downstreamEntries, app)
 
 	upstreamColumns := extractIndexedTable(doc, 14)
 	upstreamEntries := columnsToMaps(upstreamColumns)
-	reportUpstreamEntries(upstreamEntries, writeAPI)
+	reportUpstreamEntries(upstreamEntries, app)
 
 	codewordsColumns := extractIndexedTable(doc, 15)
 	codewordsEntries := columnsToMaps(codewordsColumns)
-	reportCodewordEntries(codewordsEntries, writeAPI)
+	reportCodewordEntries(codewordsEntries, app)
 
-	writeAPI.Flush()
 }
 
-func reportDownstreamEntries(entries []map[string]string, writeAPI api.WriteAPI) {
+func reportDownstreamEntries(entries []map[string]string, app *newrelic.Application) {
 	for _, entry := range entries {
 		//log.Printf("%d %#v\n", i, entry)
 		tags := make(map[string]string)
@@ -139,6 +138,7 @@ func reportDownstreamEntries(entries []map[string]string, writeAPI api.WriteAPI)
 
 		if index, ok := entry["Index"]; ok {
 			tags["index"] = index
+			fields["channel"] = index
 		} else {
 			log.Panicln("No index", entry)
 		}
@@ -179,21 +179,21 @@ func reportDownstreamEntries(entries []map[string]string, writeAPI api.WriteAPI)
 			}
 		}
 
-		p := influxdb2.NewPoint("downstream_channels",
-			tags,
-			fields,
-			time.Now())
-		writeAPI.WritePoint(p)
+		log.Println("downstream_channels")
+		app.RecordCustomEvent("downstream_channels", fields)
+		log.Println("channel:" + tags["index"])
+		log.Println(fields)
 	}
 }
 
-func reportUpstreamEntries(entries []map[string]string, writeAPI api.WriteAPI) {
+func reportUpstreamEntries(entries []map[string]string, app *newrelic.Application) {
 	for _, entry := range entries {
 		tags := make(map[string]string)
 		fields := make(map[string]interface{})
 
 		if index, ok := entry["Index"]; ok {
 			tags["index"] = index
+			fields["channel"] = index
 		} else {
 			log.Panicln("No index", entry)
 		}
@@ -236,15 +236,14 @@ func reportUpstreamEntries(entries []map[string]string, writeAPI api.WriteAPI) {
 			}
 		}
 
-		p := influxdb2.NewPoint("upstream_channels",
-			tags,
-			fields,
-			time.Now())
-		writeAPI.WritePoint(p)
+		log.Println("upstream_channels")
+		app.RecordCustomEvent("upstream_channels", fields)
+		log.Println(tags)
+		log.Println(fields)
 	}
 }
 
-func reportCodewordEntries(entries []map[string]string, writeAPI api.WriteAPI) {
+func reportCodewordEntries(entries []map[string]string, app *newrelic.Application) {
 	for _, entry := range entries {
 		//log.Printf("%d %#v\n", i, entry)
 		tags := make(map[string]string)
@@ -252,6 +251,7 @@ func reportCodewordEntries(entries []map[string]string, writeAPI api.WriteAPI) {
 
 		if index, ok := entry["Index"]; ok {
 			tags["index"] = index
+			fields["channel"] = index
 		} else {
 			log.Panicln("No index", entry)
 		}
@@ -280,11 +280,10 @@ func reportCodewordEntries(entries []map[string]string, writeAPI api.WriteAPI) {
 			}
 		}
 
-		p := influxdb2.NewPoint("cm_codewords",
-			tags,
-			fields,
-			time.Now())
-		writeAPI.WritePoint(p)
+		log.Println("cm_codewords")
+		app.RecordCustomEvent("cm_codewords", fields)
+		log.Println(tags)
+		log.Println(fields)
 	}
 }
 
