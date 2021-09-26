@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/influxdata/influxdb-client-go/v2/api"
 )
 
 var WhitespaceSplitRe = regexp.MustCompile(`\s+`)
@@ -42,16 +41,6 @@ func main() {
 		log.Panicln(err)
 	}
 
-	//influxClient := influxdb2.NewClient(influxAddr, influxToken)
-	//writeAPI := influxClient.WriteAPI(influxOrg, influxBucket)
-	//errs := writeAPI.Errors()
-
-	go func() {
-		for err := range errs {
-			log.Println(err)
-		}
-	}()
-
 	jar, err := cookiejar.New(&cookiejar.Options{})
 	if err != nil {
 		log.Panicln(err)
@@ -61,7 +50,7 @@ func main() {
 	login(client, routerAddr, routerUsername, routerPassword)
 
 	for {
-		//extractModemData(client, writeAPI, routerAddr, routerUsername, routerPassword)
+		extractModemData(client, routerAddr, routerUsername, routerPassword)
 		time.Sleep(time.Duration(rate) * time.Second)
 	}
 }
@@ -76,18 +65,25 @@ func login(client http.Client, routerAddr string, routerUsername string, routerP
 	}
 
 	bodyRaw, err := io.ReadAll(res.Body)
+	if err != nil {
+		log.Panicln(err)
+	}
 	if strings.Contains(string(bodyRaw), "alert(\"Incorrect ") {
 		log.Panicln("Incorrect user name or password")
 	}
+
 	return
 }
 
-func extractModemData(client http.Client, writeAPI api.WriteAPI, routerAddr string, routerUsername string, routerPassword string) {
+func extractModemData(client http.Client, routerAddr string, routerUsername string, routerPassword string) {
 	var res, err = client.Get(fmt.Sprintf("%s/network_setup.jst", routerAddr))
 	if err != nil {
 		log.Panicln(err)
 	}
 	bodyRaw, err := io.ReadAll(res.Body)
+	if err != nil {
+		log.Panicln(err)
+	}
 	body := string(bodyRaw)
 
 	if strings.Contains(body, "alert(\"Please Login First!\");") {
@@ -102,20 +98,19 @@ func extractModemData(client http.Client, writeAPI api.WriteAPI, routerAddr stri
 
 	downstreamColumns := extractIndexedTable(doc, 13)
 	downstreamEntries := columnsToMaps(downstreamColumns)
-	reportDownstreamEntries(downstreamEntries, writeAPI)
+	reportDownstreamEntries(downstreamEntries)
 
 	upstreamColumns := extractIndexedTable(doc, 14)
 	upstreamEntries := columnsToMaps(upstreamColumns)
-	reportUpstreamEntries(upstreamEntries, writeAPI)
+	reportUpstreamEntries(upstreamEntries)
 
 	codewordsColumns := extractIndexedTable(doc, 15)
 	codewordsEntries := columnsToMaps(codewordsColumns)
-	reportCodewordEntries(codewordsEntries, writeAPI)
+	reportCodewordEntries(codewordsEntries)
 
-	writeAPI.Flush()
 }
 
-func reportDownstreamEntries(entries []map[string]string, writeAPI api.WriteAPI) {
+func reportDownstreamEntries(entries []map[string]string) {
 	for _, entry := range entries {
 		//log.Printf("%d %#v\n", i, entry)
 		tags := make(map[string]string)
@@ -163,15 +158,13 @@ func reportDownstreamEntries(entries []map[string]string, writeAPI api.WriteAPI)
 			}
 		}
 
-		p := influxdb2.NewPoint("downstream_channels",
-			tags,
-			fields,
-			time.Now())
-		writeAPI.WritePoint(p)
+		log.Println("downstream_channels")
+		log.Println(tags)
+		log.Println(fields)
 	}
 }
 
-func reportUpstreamEntries(entries []map[string]string, writeAPI api.WriteAPI) {
+func reportUpstreamEntries(entries []map[string]string) {
 	for _, entry := range entries {
 		tags := make(map[string]string)
 		fields := make(map[string]interface{})
@@ -220,15 +213,13 @@ func reportUpstreamEntries(entries []map[string]string, writeAPI api.WriteAPI) {
 			}
 		}
 
-		p := influxdb2.NewPoint("upstream_channels",
-			tags,
-			fields,
-			time.Now())
-		writeAPI.WritePoint(p)
+		log.Println("upstream_channels")
+		log.Println(tags)
+		log.Println(fields)
 	}
 }
 
-func reportCodewordEntries(entries []map[string]string, writeAPI api.WriteAPI) {
+func reportCodewordEntries(entries []map[string]string) {
 	for _, entry := range entries {
 		//log.Printf("%d %#v\n", i, entry)
 		tags := make(map[string]string)
@@ -264,11 +255,9 @@ func reportCodewordEntries(entries []map[string]string, writeAPI api.WriteAPI) {
 			}
 		}
 
-		p := influxdb2.NewPoint("cm_codewords",
-			tags,
-			fields,
-			time.Now())
-		writeAPI.WritePoint(p)
+		log.Println("cm_codewords")
+		log.Println(tags)
+		log.Println(fields)
 	}
 }
 
