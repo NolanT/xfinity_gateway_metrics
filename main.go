@@ -15,11 +15,27 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/newrelic/go-agent/v3/newrelic"
 )
 
 var WhitespaceSplitRe = regexp.MustCompile(`\s+`)
 
 func main() {
+	nrLicenseKey, ok := os.LookupEnv("NEW_RELIC_LICENSE_KEY")
+	if !ok {
+		log.Fatalln("NEW_RELIC_LICENSE_KEY not set")
+	}
+	nrAppName, ok := os.LookupEnv("NEW_RELIC_APP_NAME")
+	if !ok {
+		log.Fatalln("NEW_RELIC_APP_NAME not set")
+	}
+
+	app, err := newrelic.NewApplication(
+		newrelic.ConfigAppName(nrAppName),
+		newrelic.ConfigLicense(nrLicenseKey),
+		newrelic.ConfigDistributedTracerEnabled(true),
+	)
+
 	routerAddr, ok := os.LookupEnv("ROUTER_ADDR")
 	if !ok {
 		log.Fatalln("ROUTER_ADDR not set")
@@ -34,7 +50,7 @@ func main() {
 	}
 	rateRaw, ok := os.LookupEnv("SCRAPE_RATE_SECS")
 	if !ok {
-		rateRaw = "10"
+		rateRaw = "120"
 	}
 	rate, err := strconv.ParseInt(rateRaw, 10, 64)
 	if err != nil {
@@ -47,10 +63,11 @@ func main() {
 	}
 
 	client := http.Client{Jar: jar}
+	client.Transport = newrelic.NewRoundTripper(client.Transport)
 	login(client, routerAddr, routerUsername, routerPassword)
 
 	for {
-		extractModemData(client, routerAddr, routerUsername, routerPassword)
+		extractModemData(client, app, routerAddr, routerUsername, routerPassword)
 		time.Sleep(time.Duration(rate) * time.Second)
 	}
 }
@@ -75,7 +92,10 @@ func login(client http.Client, routerAddr string, routerUsername string, routerP
 	return
 }
 
-func extractModemData(client http.Client, routerAddr string, routerUsername string, routerPassword string) {
+func extractModemData(client http.Client, app *newrelic.Application, routerAddr string, routerUsername string, routerPassword string) {
+	txn := app.StartTransaction("extractModemData")
+	defer txn.End()
+
 	var res, err = client.Get(fmt.Sprintf("%s/network_setup.jst", routerAddr))
 	if err != nil {
 		log.Panicln(err)
@@ -98,19 +118,19 @@ func extractModemData(client http.Client, routerAddr string, routerUsername stri
 
 	downstreamColumns := extractIndexedTable(doc, 13)
 	downstreamEntries := columnsToMaps(downstreamColumns)
-	reportDownstreamEntries(downstreamEntries)
+	reportDownstreamEntries(downstreamEntries, app)
 
 	upstreamColumns := extractIndexedTable(doc, 14)
 	upstreamEntries := columnsToMaps(upstreamColumns)
-	reportUpstreamEntries(upstreamEntries)
+	reportUpstreamEntries(upstreamEntries, app)
 
 	codewordsColumns := extractIndexedTable(doc, 15)
 	codewordsEntries := columnsToMaps(codewordsColumns)
-	reportCodewordEntries(codewordsEntries)
+	reportCodewordEntries(codewordsEntries, app)
 
 }
 
-func reportDownstreamEntries(entries []map[string]string) {
+func reportDownstreamEntries(entries []map[string]string, app *newrelic.Application) {
 	for _, entry := range entries {
 		//log.Printf("%d %#v\n", i, entry)
 		tags := make(map[string]string)
@@ -118,6 +138,7 @@ func reportDownstreamEntries(entries []map[string]string) {
 
 		if index, ok := entry["Index"]; ok {
 			tags["index"] = index
+			fields["channel"] = index
 		} else {
 			log.Panicln("No index", entry)
 		}
@@ -159,18 +180,20 @@ func reportDownstreamEntries(entries []map[string]string) {
 		}
 
 		log.Println("downstream_channels")
-		log.Println(tags)
+		app.RecordCustomEvent("downstream_channels", fields)
+		log.Println("channel:" + tags["index"])
 		log.Println(fields)
 	}
 }
 
-func reportUpstreamEntries(entries []map[string]string) {
+func reportUpstreamEntries(entries []map[string]string, app *newrelic.Application) {
 	for _, entry := range entries {
 		tags := make(map[string]string)
 		fields := make(map[string]interface{})
 
 		if index, ok := entry["Index"]; ok {
 			tags["index"] = index
+			fields["channel"] = index
 		} else {
 			log.Panicln("No index", entry)
 		}
@@ -214,12 +237,13 @@ func reportUpstreamEntries(entries []map[string]string) {
 		}
 
 		log.Println("upstream_channels")
+		app.RecordCustomEvent("upstream_channels", fields)
 		log.Println(tags)
 		log.Println(fields)
 	}
 }
 
-func reportCodewordEntries(entries []map[string]string) {
+func reportCodewordEntries(entries []map[string]string, app *newrelic.Application) {
 	for _, entry := range entries {
 		//log.Printf("%d %#v\n", i, entry)
 		tags := make(map[string]string)
@@ -227,6 +251,7 @@ func reportCodewordEntries(entries []map[string]string) {
 
 		if index, ok := entry["Index"]; ok {
 			tags["index"] = index
+			fields["channel"] = index
 		} else {
 			log.Panicln("No index", entry)
 		}
@@ -256,6 +281,7 @@ func reportCodewordEntries(entries []map[string]string) {
 		}
 
 		log.Println("cm_codewords")
+		app.RecordCustomEvent("cm_codewords", fields)
 		log.Println(tags)
 		log.Println(fields)
 	}
