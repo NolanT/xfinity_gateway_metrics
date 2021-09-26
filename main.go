@@ -3,9 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"github.com/PuerkitoBio/goquery"
-	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
-	"github.com/influxdata/influxdb-client-go/v2/api"
 	"io"
 	"log"
 	"net/http"
@@ -16,27 +13,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/PuerkitoBio/goquery"
+	"github.com/influxdata/influxdb-client-go/v2/api"
 )
 
 var WhitespaceSplitRe = regexp.MustCompile(`\s+`)
 
 func main() {
-	influxAddr, ok := os.LookupEnv("INFLUX_ADDR")
-	if !ok {
-		log.Fatalln("INFLUX_ADDR not set")
-	}
-	influxToken, ok := os.LookupEnv("INFLUX_TOKEN")
-	if !ok {
-		log.Fatalln("INFLUX_TOKEN not set")
-	}
-	influxOrg, ok := os.LookupEnv("INFLUX_ORG")
-	if !ok {
-		log.Fatalln("INFLUX_ORG not set")
-	}
-	influxBucket, ok := os.LookupEnv("INFLUX_BUCKET")
-	if !ok {
-		log.Fatalln("INFLUX_BUCKET not set")
-	}
 	routerAddr, ok := os.LookupEnv("ROUTER_ADDR")
 	if !ok {
 		log.Fatalln("ROUTER_ADDR not set")
@@ -58,9 +42,9 @@ func main() {
 		log.Panicln(err)
 	}
 
-	influxClient := influxdb2.NewClient(influxAddr, influxToken)
-	writeAPI := influxClient.WriteAPI(influxOrg, influxBucket)
-	errs := writeAPI.Errors()
+	//influxClient := influxdb2.NewClient(influxAddr, influxToken)
+	//writeAPI := influxClient.WriteAPI(influxOrg, influxBucket)
+	//errs := writeAPI.Errors()
 
 	go func() {
 		for err := range errs {
@@ -77,7 +61,7 @@ func main() {
 	login(client, routerAddr, routerUsername, routerPassword)
 
 	for {
-		extractModemData(client, writeAPI, routerAddr, routerUsername, routerPassword)
+		//extractModemData(client, writeAPI, routerAddr, routerUsername, routerPassword)
 		time.Sleep(time.Duration(rate) * time.Second)
 	}
 }
