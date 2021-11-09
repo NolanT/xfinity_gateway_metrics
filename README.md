@@ -1,3 +1,3 @@
-A simple, hacky tool to scrape xfinity cable modem metrics and export them to Influx.
+A simple, hacky tool to scrape xfinity cable modem metrics and export them to New Relic.
 
-Only tested with Software Image CGM4331COM_4.8p11s1_PROD_sey
+Tested with Software Image CGM4331COM_4.11p7s1_PROD_sey
