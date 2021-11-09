@@ -12,8 +12,11 @@ Tested with Software Image CGM4331COM_4.11p7s1_PROD_sey
    - Example: `password`
 - `NEW_RELIC_APP_NAME`
    - Example: `xfi_gateway_metrics`
+   - [More informarion](https://docs.newrelic.com/docs/apm/agents/go-agent/configuration/go-agent-configuration/#app-name)
 - `NEW_RELIC_LICENSE_KEY` (secret)
    - Example: `....NRAL`
-   - [Insights Insert Key](https://docs.newrelic.com/docs/apis/intro-apis/new-relic-api-keys/#insights-insert-key)
+   - [License Key](https://one.newrelic.com/launcher/api-keys-ui.api-keys-launcher)
+   - [What's a license key?](https://docs.newrelic.com/docs/apis/intro-apis/new-relic-api-keys/#ingest-license-key)
 - `SCRAPE_RATE_SECS`
    - Example: `120`
+   - Frequency of statistic scraping
