@@ -1,14 +1,14 @@
-#build stage
-FROM golang:alpine AS builder
-RUN apk add --no-cache git
-WORKDIR /go/src/app
-COPY . .
-RUN go get -d -v ./...
-RUN go build -o /go/bin/app -v ./...
+# Start by building the application.
+FROM golang:1.17-bullseye as build
 
-#final stage
-FROM alpine:latest
-RUN apk --no-cache add ca-certificates
-COPY --from=builder /go/bin/app /app
-ENTRYPOINT /app
-LABEL Name=xfinitygatewaymetrics Version=0.0.1
+WORKDIR /go/src/app
+ADD . /go/src/app
+
+RUN go get -d -v ./...
+
+RUN go build -o /go/bin/app
+
+# Now copy it into our base image.
+FROM gcr.io/distroless/base-debian11
+COPY --from=build /go/bin/app /
+CMD ["/app"]
