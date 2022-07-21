@@ -4,7 +4,7 @@ go 1.17
 
 require (
 	github.com/PuerkitoBio/goquery v1.8.0
-	github.com/newrelic/go-agent/v3 v3.15.1
+	github.com/newrelic/go-agent/v3 v3.17.0
 )
 
 require (
